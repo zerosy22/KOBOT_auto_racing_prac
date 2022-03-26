@@ -1,0 +1,152 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import rospy
+import numpy as np
+import cv2, random, math, time
+
+Width = 640
+Height = 480
+Offset = 330
+global count
+count=0
+global l_grad, r_grad
+
+def draw_steer(image, steer_angle):  
+    global Width, Height, arrow_pic
+
+    arrow_pic = cv2.imread('steer_arrow.png', cv2.IMREAD_COLOR)
+
+    origin_Height = arrow_pic.shape[0]
+    origin_Width = arrow_pic.shape[1]
+    steer_wheel_center = origin_Height * 0.74
+    arrow_Height = Height / 2
+    arrow_Width = (arrow_Height * 462) / 728
+
+    matrix = cv2.getRotationMatrix2D((origin_Width / 2, steer_wheel_center), (steer_angle) * 1.5, 0.7)
+    arrow_pic = cv2.warpAffine(arrow_pic, matrix, (origin_Width + 60, origin_Height))  # 어파인 변환한 ->결과 영상을 생성
+    arrow_pic = cv2.resize(arrow_pic, dsize=(arrow_Width, arrow_Height), interpolation=cv2.INTER_AREA)
+
+    gray_arrow = cv2.cvtColor(arrow_pic, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray_arrow, 1, 255, cv2.THRESH_BINARY_INV)
+
+    arrow_roi = image[arrow_Height: Height, (Width / 2 - arrow_Width / 2): (Width / 2 + arrow_Width / 2)]
+
+    arrow_roi = cv2.add(arrow_pic, arrow_roi, mask=mask)
+    res = cv2.add(arrow_roi, arrow_pic)
+    image[(Height - arrow_Height): Height, (Width / 2 - arrow_Width / 2): (Width / 2 + arrow_Width / 2)] = res
+
+    cv2.imshow('steer', image)
+
+
+
+def makelineL(roi,main):
+    global l_grad
+    def rec(a,l_grad,n):
+        return round(float((a-round(n,3))/round(l_grad,3)),3)
+
+
+    #차선 인식후 허프변환 활용한 선 검출
+    lines = cv2.HoughLinesP(roi, 1.0, np.pi / 180, 50, minLineLength=1, maxLineGap=1000)
+    if lines is not None:
+
+
+        pt1 = (lines[0][0][0], lines[0][0][1])
+        pt2 = (lines[0][0][2], lines[0][0][3])
+        l_grad = float((lines[0][0][1] - lines[0][0][3]))/float((lines[0][0][0]-lines[0][0][2]))
+        n = float(lines[0][0][1]-(l_grad*lines[0][0][0]))
+        print(l_grad)
+        a=40
+        x= rec(a,l_grad,n)
+   
+        cv2.circle(main,(int(x),int(a+310)),5,(0,255,255),-1)
+
+        #cv2.line(roirel, pt1, pt2, (0, 0, 255), 3, cv2.LINE_4)
+        x_1 = rec(0, l_grad, n)
+        x_2 = rec(100, l_grad, n)
+
+        cv2.line(main, (int(x_1),0+310), (int(x_2),100+310), (255, 0, 255), 2, cv2.LINE_4)
+        print(pt1)
+        print(pt2)
+    else:
+        global count
+        count+=1
+
+def makelineR(roi,main):
+    global r_grad
+    def rec(a,r_grad,n):
+        return float((a-round(n,3))/round(r_grad,3))
+
+    lines = cv2.HoughLinesP(roi, 1.0, np.pi / 180, 50, minLineLength=1, maxLineGap=1000)
+    if lines is not None:
+
+        pt1 = (lines[0][0][0], lines[0][0][1])
+        pt2 = (lines[0][0][2], lines[0][0][3])
+        r_grad = float((lines[0][0][1] - lines[0][0][3]))/float((lines[0][0][0]-lines[0][0][2]))
+        n = float(lines[0][0][1]-(r_grad*lines[0][0][0]))
+        print(r_grad)
+        a=40
+        x= rec(a,r_grad,n)
+        cv2.circle(main,(int(x)+480,int(a)+310),5,(0,255,255),-1)
+
+        #cv2.line(roirel, pt1, pt2, (0, 0, 255), 3, cv2.LINE_4)
+        x_1 = rec(0, r_grad, n)
+        x_2 = rec(100, r_grad, n)
+        cv2.line(main, (int(x_1)+480, 0 + 310), (int(x_2)+480, 100 + 310), (255, 0, 255), 2, cv2.LINE_4)
+        print(pt1)
+        print(pt2)
+    else:
+        global count
+        count +=1
+
+def steer_angle():
+    global l_grad,r_grad
+    if(l_grad>-0.68 and l_grad<-0.58):
+   return 0
+    else:
+        return((l_grad+r_grad)*(-40))
+
+if __name__ == '__main__':
+    cap = cv2.VideoCapture('kmu_track.mkv')
+    se = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    c=0
+    time.sleep(3)
+
+    while not rospy.is_shutdown():
+       ret, img = cap.read()
+        main_img = img.copy()
+        blur_conversion = cv2.GaussianBlur(img, (5, 5), 0)
+        dst = cv2.Canny(blur_conversion, 140, 170)
+
+            #차선인식하는 범위 설정(가운데 선 인식을 피하기 위한 roi)
+        lx,ly=310,0
+        lh,lw = 150,100
+        roi_l = dst[lx:lx+lw,ly:ly+lh]
+        rx, ry = 310, 480
+        rh, rw = 120, 100
+        roi_r = dst[rx:rx + rw, ry:ry + rh]
+        roi1 = main_img[lx:lx+lw,ly:ly+lh]
+        roi2 = main_img[rx:rx+rw,ry:ry+rh]
+
+        makelineL(roi_l,main_img)
+        makelineR(roi_r,main_img)
+        print('-----------------------------------------------')
+        cv2.line(main_img, (0, 350), (650, 350), (255, 255, 0), 1, cv2.LINE_4)
+        main_img[lx:lx+lw,ly:ly+lh] =roi1
+        main_img[rx:rx + rw, ry:ry + rh] = roi2
+        if count ==2:
+            c +=1
+            count=0
+        else:
+            count=0
+
+
+        draw_steer(main_img, steer_angle())
+   print(steer_angle())
+        cv2.imshow('main', main_img)
+        cv2.imshow('roi2',roi2)
+        cv2.imshow('roi1', roi1)
+   print(c)
+
+        if cv2.waitKey(10) & 0xFF == ord('q'):
+            break
